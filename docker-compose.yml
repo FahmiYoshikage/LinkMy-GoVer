@@ -1,0 +1,101 @@
+# LinkMy v2.0 - Docker Compose Development
+services:
+  # Go API Server
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: linkmy_api
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgres://linkmy:${DB_PASSWORD:-linkmy_dev}@db:5432/linkmy_db?sslmode=disable
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=${JWT_SECRET:-dev-secret-change-in-production}
+      - ENVIRONMENT=development
+      - CORS_ORIGINS=http://localhost:3001,http://localhost:5173
+      - PORT=3000
+      - MAIL_HOST=${MAIL_HOST:-smtp.gmail.com}
+      - MAIL_PORT=${MAIL_PORT:-587}
+      - MAIL_USERNAME=${MAIL_USERNAME}
+      - MAIL_PASSWORD=${MAIL_PASSWORD}
+      - MAIL_FROM=${MAIL_FROM:-noreply@linkmy.deepkernel.site}
+    ports:
+      - "3000:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - linkmy_net
+
+  # PostgreSQL 16
+  db:
+    image: postgres:16-alpine
+    container_name: linkmy_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: linkmy
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-linkmy_dev}
+      POSTGRES_DB: linkmy_db
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U linkmy -d linkmy_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - linkmy_net
+    # Optimized for 4GB RAM server
+    command: >
+      postgres
+      -c shared_buffers=256MB
+      -c effective_cache_size=512MB
+      -c work_mem=16MB
+      -c maintenance_work_mem=64MB
+      -c max_connections=50
+
+  # Redis 7
+  redis:
+    image: redis:7-alpine
+    container_name: linkmy_redis
+    restart: unless-stopped
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - linkmy_net
+
+  # SvelteKit Frontend (will be added in Phase 2)
+  web:
+    build:
+      context: ./frontend
+    container_name: linkmy_web
+    restart: unless-stopped
+    environment:
+      - PUBLIC_API_URL=http://api:3000
+    ports:
+      - "3001:3000"
+    depends_on:
+      - api
+    networks:
+      - linkmy_net
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+volumes:
+  pg_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  linkmy_net:
+    driver: bridge
